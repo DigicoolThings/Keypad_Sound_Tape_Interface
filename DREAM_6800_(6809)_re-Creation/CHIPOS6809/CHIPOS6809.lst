@@ -1,0 +1,1354 @@
+                      ; CHIPOS for the 6809 MECB based re-Creation
+                      ; ------------------------------------------
+                      ;
+                      ; Original CHIPOS source file header below.
+                      ;
+                      ; Original source has been modified for:
+                      ; - 6809 assembly by the asm6809 Assembler
+                      ; - DigicoolThings MECB based DREAM re-Creation, comprising of:
+                      ;       - 2MHz 6809 CPU Card configured as 48K RAM / 16K ROM / $C0 IO (MECB)
+                      ;       - Motorola I/O Card for PIA + PTM (MECB)
+                      ;       - 128x64 OLED Display (MECB)
+                      ;       - 4x5 matrix Keypad (with 4x Function Keys)
+                      ;       - Keypad / Tape / Sound interface
+                      ; - Keypad routines updated for 4x5 Matrix and removal of CA1 flag use
+                      ; - Alternate FN key exit from the FN0 MEMOD mode (reset unnecessary)
+                      ; - Tape Load / Dump display of Start / End address as completion feedback
+                      ; - Removal of DMA-ENAB (as no longer using DMA driven memory-mapped display)
+                      ; - Support for 128x64 HiRes display mode and original 64x32 resolution.
+                      ; - Addition of new CHIP-8 instruction (Fx95) to switch display mode (OLEDRES)
+                      ; - Removal of DDPAT, as now replaced with pre-expanded 3x5 & 6x10 fonts
+                      ; - Removal of PATNH & PATNL, no longer needed with removal of DDPAT
+                      ; - Removal of BLOC, now replaced with new OLEDRES
+                      ; - Removal of DISBUF & ENDBUF, as display buffer not required for OLED display
+                      ; - CHIP-8 Interpreter entry address changed to C800 (instead of original C000)
+                      ; - CHIPOS subroutines all relocated to re-direct jumps located from $F700
+                      ;
+                      ; Assembled binary intended for ROM bootable location from $C800 - $FFFF
+                      ;       (with plenty of room for future expansions / monitor additions etc.)
+                      ;
+                      ; Note: Comments in UPPER CASE are the original source comments (mjbauer),
+                      ;       my added / ammended comments are all in Mixed Case.
+                      ;
+                      ;%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      ;                           C H I P O S
+                      ;
+                      ;  COMPACT HEXADECIMAL INTERPRETIVE PROGRAMMING AND OPERATING SYSTEM
+                      ;
+                      ;     DREAM-6800 OPERATING SYSTEM WITH CHIP8 LANGUAGE INTERPRETER 
+                      ;
+                      ;       ORIGINATED BY MICHAEL J BAUER, DEAKIN UNIVERSITY, 1978
+                      ;
+                      ;                  www.mjbauer.biz/DREAM6800.htm
+                      ;
+                      ;%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      ;
+                      ; (1) Upon Relocation, the data at ZRANDOM must be changed accordingly.
+                      ;
+F000                  ENTRY           EQU     $F000           ; Entry (Reset) Address
+C800                  CHIP8           EQU     $C800           ; CHIP-8 Interpreter entry point
+C088                  OLED            EQU     $C088           ; OLED Panel base address
+C088                  OLED_CMD        EQU     OLED            ; OLED Command address
+C089                  OLED_DTA        EQU     OLED+1          ; OLED Data address
+C010                  PIA             EQU     $C010           ; MC6821 PIA base address
+C012                  PIA_PRTB        EQU     PIA+2           ; MC6821 PIA Port B & DDR B address
+C013                  PIA_CTLB        EQU     PIA+3           ; MC6821 PIA Control Register B address
+C000                  PTM             EQU     $C000           ; MC6840 PTM address
+C001                  PTMSTA          EQU     PTM+1           ; PTM Read Status Register
+C000                  PTMC13          EQU     PTM             ; PTM Control Registers 1 and 3
+C001                  PTMC2           EQU     PTM+1           ; PTM Control Register 2
+C006                  PTMTM3          EQU     PTM+6           ; PTM Latch 3 (MSB)
+                      ;
+                      ; SCRATCHPAD RAM ASSIGNMENTS (PAGE 0)
+                      ;
+0000                  IRQV            EQU     $0000           ; INTERRUPT VECTOR
+0002                  BEGA            EQU     $0002           ; BEGIN ADRS FOR LOAD/DUMP
+0004                  ENDA            EQU     $0004           ; ENDING ADRS FOR LOAD/DUMP
+0006                  ADRS            EQU     $0006           ; ADRS FOR GO AND MEMOD
+                      ;DDPAT          EQU     $0008           ; DIGIT PATTERN TEMP (5 BYTES)
+000D                  RND             EQU     $000D           ; RANDOM BYTE (SEED)
+000E                  N               EQU     $000E           ; TEMP
+000F                  ATEMP           EQU     $000F           ; TEMP
+0012                  XTEMP           EQU     $0012           ; 2-BYTE SAVE FOR X, SP
+0014                  ZHI             EQU     $0014           ; TEMP ADRS
+0015                  ZLO             EQU     $0015           ; 
+0017                  KEYCOD          EQU     $0017           ; KEYCODE TEMP
+0018                  BADRED          EQU     $0018           ; KEY BAD-READ FLAG
+001C                  OLEDRES         EQU     $001C           ; Oled Resolution (was BLOC) 0=Off / 1=128x64 / 2=64x32
+                      ;PATNH          EQU     $001E           ; PATTERN TEMP
+                      ;PATNL          EQU     $001F           ;
+0020                  TIME            EQU     $0020           ; RTC TIMER VALUE
+0021                  TONE            EQU     $0021           ; DURATION COUNT FOR TONE
+0022                  PPC             EQU     $0022           ; PSEUDO PRGM-COUNTER
+0024                  PSP             EQU     $0024           ; PSEUDO STACK-PTR
+0026                  I               EQU     $0026           ; CHIP8 MEMORY POINTER
+0028                  PIR             EQU     $0028           ; PSEUDO INST-REG
+002A                  VXLOC           EQU     $002A           ; POINTS TO VX
+002C                  RNDX            EQU     $002C           ; RANDOM POINTER
+002E                  VX              EQU     $002E           ; VARIABLE X (ALSO X-COORD)
+002F                  VY              EQU     $002F           ; VARIABLE Y (ALSO Y-COORD)
+                      ;
+                      ; CHIP8 VARIABLES (TABLE)
+                      ;
+0030                  VO              EQU     $0030
+003F                  VF              EQU     $003F
+                      ;
+                      ; CHIP8 SUBROUTINE STACK
+                      ;
+005F                  STACK           EQU     $005F
+                      ;
+                      ; OPERATING-SYSTEM STACK
+                      ;
+007F                  STOP            EQU     $007F           ; STACK TOP (MONITOR)
+                      ;
+                      ; CHIP-8 GRAPHIC DISPLAY AREA
+                      ; ( 1/4K RAM BLOCK MAPPED ONTO T.V. SCREEN BY DMA.
+                      ; IN FORMAT 64X32 DOTS
+                      ;
+                      ;DISBUF         EQU     $0100           ; DISPLAY BUFFER AREA
+                      ;ENDBUF         EQU     $0200
+C010                  PIAA            EQU     $C010           ; PORT-A FOR KEYPAD
+C012                  PIAB            EQU     $C012           ; PORT-B FOR TAPE, RTC, TONE
+                      ;
+                      ; CHIP-8 INTERPRETER MAINLINE
+                      ;
+C800                                  ORG     CHIP8
+                      ;
+C800 170086                           LBSR    ZERASE          ; NORMAL ENTRY POINT
+C803 8E0200                           LDX     #$0200          ; RESET PSEUDO-PC
+C806 BF0022                           STX     PPC
+C809 8E005F                           LDX     #STACK          ; RESET   STACK PTR
+C80C BF0024                           STX     PSP
+C80F BE0022           FETCH           LDX     PPC             ; POINT TO NEXT INSTR
+C812 AE84                             LDX     0,X             ; COPY TO PIR
+C814 BF0028                           STX     PIR
+C817 BF0014                           STX     ZHI             ; SAVE ADRS (MMM)
+C81A BDC8FC                           JSR     SKIP2           ; BUMP PRGM-CTR
+C81D B60014                           LDA     ZHI             ; MASK OFF ADRS
+C820 840F                             ANDA    #$0F
+C822 B70014                           STA     ZHI
+C825 8D26                             BSR     FINDV           ; EXTRACT VX ALSO
+C827 B7002E                           STA     VX              ; STASH VX
+C82A BF002A                           STX     VXLOC           ; SAVE LOCATION OF VX
+C82D B60029                           LDA     PIR+1           ; FIND Y
+C830 44                               LSRA
+C831 44                               LSRA
+C832 44                               LSRA
+C833 44                               LSRA
+C834 8D17                             BSR     FINDV           ; EXTRACT VY
+C836 B7002F                           STA     VY              ; STASH VY
+C839 8EC856           EXEC            LDX     #JUMTAB-2       ; POINT TO JUMP TABLE
+C83C B60028                           LDA     PIR             ; EXTRACT MSD
+C83F 84F0                             ANDA    #$F0
+C841 3002             EXEl            LEAX    2,X             ; FlND ROUTINE ADRS
+C843 8010                             SUBA    #$10
+C845 24FA                             BCC     EXEl            ; BRANCH IF HIGHER OR SAME
+C847 AE84                             LDX     0,X             ; LOAD ROUTINE ADRS
+C849 AD84                             JSR     0,X             ; PERFORM ROUTINE
+C84B 20C2                             BRA     FETCH           ; NEXT INSTR...
+C84D 8E002F           FINDV           LDX     #VO-1           ; POINT TO VARIABLES TABLE
+C850 3001             FIND1           LEAX    1,X             ; FIND LOCN VX
+C852 4A                               DECA
+C853 2AFB                             BPL     FIND1
+C855 A684                             LDA     0,X             ; FETCH VX FROM TABLE
+C857 39                               RTS
+                      ;
+                      ; JUMP TABLE(ROUTINE ADDRESSES)
+                      ; 
+C858 C878             JUMTAB          FDB     EXCALL          ; ERASE, RET, CALL, NOP
+C85A C8BA                             FDB     GOTO            ; GOTO MMM
+C85C C8C8                             FDB     DOSUB           ; DO MMM
+C85E C8E0                             FDB     SKFEK           ; SKF VX=KK
+C860 C8E9                             FDB     SKFNK           ; SKF VX#KK
+C862 C8F2                             FDB     SKFEV           ; SKF VX=VY
+C864 C91E                             FDB     LETK            ; Vx=KK
+C866 C923                             FDB     LETVK           ; VX=VX+KK
+C868 C932                             FDB     LETVV           ; VX=[VX][+-&!]VY
+C86A C8F7                             FDB     SKFNV           ; SKF  VX#VY
+C86C C8C1                             FDB     LETI            ; I=MMM
+C86E C8AA                             FDB     GOTOV           ; GOTO MMM+VO
+C870 C92B                             FDB     RANDV           ; VX-RND.KK
+C872 CB50                             FDB     SHOW            ; SHOW  N@VX, VY
+C874 C905                             FDB     SKFKEY          ; SKF VX[=#]KEY
+C876 C9A4                             FDB     MISC            ; (MINOR JUMP TABL)
+                      ;
+                      ; ERASE, RETURN, CALL (MLS), OR NOP INTRN:
+                      ;
+C878 F60028           EXCALL          LDB     PIR             ; GET INSTR REG
+C87B 2628                             BNE     CALL
+C87D B60029                           LDA     PIR+1
+C880 81E0                             CMPA    #$E0
+C882 2705                             BEQ     ZERASE
+C884 81EE                             CMPA    #$EE
+C886 2706                             BEQ     RETDO
+C888 39                               RTS                     ; NOP, FETCH
+                      ;
+                      ; ERASE routine 
+C889 4F               ZERASE          CLRA                    ; WRITE ZEROS TO SCREEN
+C88A 5F                               CLRB                    ;
+C88B 7EF192           ZFILL           JMP     OledFill
+C88E 1F41             RETDO           TFR     S,X             ; SAVE REAL SP
+C890 10FE0024                         LDS     PSP
+C894 3502                             PULS    A
+C896 B70022                           STA     PPC             ; PULL PPC
+C899 3502                             PULS    A
+C89B B70023                           STA     PPC+1
+C89E 10FF0024                         STS     PSP             ; SAVE CHIP8 SP
+C8A2 1F14                             TFR     X,S             ; RESTORE SP
+C8A4 39                               RTS
+C8A5 BE0014           CALL            LDX     ZHI             ; GET OPRND ADRS(MMM)
+C8A8 6E84                             JMP     0,X             ; PERFORM MLS
+C8AA B60030           GOTOV           LDA     VO              ; 16-BIT ADD VO TO ADRS
+C8AD 5F                               CLRB
+C8AE BB0015                           ADDA    ZLO
+C8B1 B70015                           STA     ZLO
+C8B4 F90014                           ADCB    ZHI
+C8B7 F70014                           STB     ZHI
+C8BA BE0014           GOTO            LDX     ZHI             ; MOVE ADRS TO PPC
+C8BD BF0022                           STX     PPC
+C8C0 39                               RTS                     ; FETCH
+C8C1 BE0014           LETI            LDX     ZHI             ; MOVE ADRS TO MI PTR
+C8C4 BF0026                           STX     I
+C8C7 39                               RTS                     ; FETCH
+C8C8 1F41             DOSUB           TFR     S,X             ; SAVE SP
+C8CA 10FE0024                         LDS     PSP
+C8CE B60023                           LDA     PPC+1           ; PUSH PPC
+C8D1 3402                             PSHS    A
+C8D3 B60022                           LDA     PPC
+C8D6 3402                             PSHS    A
+C8D8 10FF0024                         STS     PSP             ; SAVE CHIP SP
+C8DC 1F14                             TFR     X,S             ; RESTORE REAL SP
+C8DE 20DA                             BRA     GOTO            ; JUMP TO ADRS(MMM)
+                      ;
+                      ; CONDITIONAL SKIP ROUTINES
+                      ;
+C8E0 B60029           SKFEK           LDA     PIR+1           ; GET KK
+C8E3 B1002E           SKFEQ           CMPA    VX
+C8E6 2714                             BEQ     SKIP2
+C8E8 39                               RTS
+C8E9 B60029           SKFNK           LDA     PIR+1           ; GET KK
+C8EC B1002E           SKFNE           CMPA    VX
+C8EF 260B                             BNE     SKIP2
+C8F1 39                               RTS
+C8F2 B6002F           SKFEV           LDA     VY              ; GET VY
+C8F5 20EC                             BRA     SKFEQ
+C8F7 B6002F           SKFNV           LDA     VY
+C8FA 20F0                             BRA     SKFNE
+C8FC BE0022           SKIP2           LDX     PPC             ; ADD 2 TO PPC
+C8FF 3002                             LEAX    2,X
+C901 BF0022                           STX     PPC
+C904 39                               RTS
+C905 BDCBA1           SKFKEY          JSR     ZKEYINP         ; INTERROGATE KEYBOARD
+C908 7D0018                           TST     BADRED          ; KEY DOWN?
+C90B 2708                             BEQ     SKFK1
+C90D C6A1                             LDB     #$A1            ; WHAT INSTRN?
+C90F F10029                           CMPB    PIR+1           ; SKF VX#KEY
+C912 27E8                             BEQ     SKIP2
+C914 39                               RTS                     ; NO KEY GO FETCH
+C915 C69E             SKFK1           LDB     #$9E
+C917 F10029                           CMPB    PIR+1           ; WHAT INSTRN?
+C91A 27C7                             BEQ     SKFEQ
+C91C 20CE                             BRA     SKFNE
+                      ;
+                      ; ARITHMETIC/LOGIC ROUTINES
+                      ;
+C91E B60029           LETK            LDA     PIR+1           ; GET KK
+C921 2045                             BRA     PUTVX
+C923 B60029           LETVK           LDA     PIR+1
+C926 BB002E                           ADDA    VX
+C929 203D                             BRA     PUTVX
+C92B 8D41             RANDV           BSR     ZRANDOM         ; GET RANDOM BYTE
+C92D B40029                           ANDA    PIR+1
+C930 2036                             BRA     PUTVX
+C932 B6002E           LETVV           LDA     VX
+C935 F60029                           LDB     PIR+1
+C938 C40F                             ANDB    #$0F            ; EXTRACT N
+C93A 2603                             BNE     LETV1
+C93C B6002F                           LDA     VY              ; VX=VY
+C93F 5A               LETV1           DECB
+C940 2603                             BNE     LETV2
+C942 BA002F                           ORA     VY              ; VX=VX!VY (OR)
+C945 5A               LETV2           DECB
+C946 2603                             BNE     LETV4
+C948 B4002F                           ANDA    VY              ; VX=VX.VY
+C94B 5A               LETV4           DECB
+C94C 5A                               DECB
+C94D 260B                             BNE     LETV5
+C94F 7F003F                           CLR     VF              ; VF=0
+C952 BB002F                           ADDA    VY              ; VX=VX+VY
+C955 2403                             BCC     LETV5           ; RESULT < 256
+C957 7C003F                           INC     VF              ; VF=1(OVERFLOW)
+C95A 5A               LETV5           DECB
+C95B 260B                             BNE     PUTVX
+C95D 7F003F                           CLR     VF              ; VF=0
+C960 B0002F                           SUBA    VY              ; VX=VX-VY
+C963 2503                             BCS     PUTVX           ; VX<VY? (UNSIGNED)
+C965 7C003F                           INC     VF              ; NO PUT VF=l
+C968 BE002A           PUTVX           LDX     VXLOC           ; REPLACE VX
+C96B A784                             STA     0,X
+C96D 39                               RTS
+                      ;
+                      ; RANDOM BYTE GENERATOR
+                      ;
+                      ; RANDOM routine
+                      ;
+C96E 86C8             ZRANDOM         LDA     #$C8            ; HIGH-ORDER BYTE OF RNDX =
+C970 B7002C                           STA     RNDX            ; =MSB OF CHIP8 START ADRS
+C973 7C002D                           INC     RNDX+1
+C976 BE002C                           LDX     RNDX            ; POINT TO NEXT PROGRAM BYTE
+C979 B6000D                           LDA     RND             ; GET SEED (LAST VALUE)
+C97C AB84                             ADDA    0,X             ; MANGLE IT
+C97E A88900FF                         EORA    $FF,X
+C982 B7000D                           STA     RND             ; STASH IT
+C985 39                               RTS
+                      ;
+                      ; JUMP TABLE FOR MISCELLANEOUS INSTRNS [FXZZ]
+                      ;
+C986 07               MINJMP          FCB     $07             ; VX=TIME
+C987 C9C6                             FDB     VTIME
+C989 0A                               FCB     $0A             ; VX=KEY
+C98A C9CB                             FDB     VKEY
+C98C 15                               FCB     $15             ; TIME=VX
+C98D C9D0                             FDB     TIMEV
+C98F 18                               FCB     $18             ; TONE=VX
+C990 C9D4                             FDB     TONEV
+C992 1E                               FCB     $1E             ; I=I+VX
+C993 C9D9                             FDB     LETIV
+C995 29                               FCB     $29             ; I=DSPL,VX
+C996 C9E7                             FDB     ZLETDSP
+C998 33                               FCB     $33             ; MI=DEQ,VX
+C999 CAFB                             FDB     LETDEQ
+C99B 55                               FCB     $55             ; MI=VO:VX
+C99C CB1C                             FDB     STORV
+C99E 65                               FCB     $65             ; VO:VX=MI
+C99F CB2B                             FDB     LOADV
+C9A1 95                               FCB     $95             ; Set Graphics Mode
+C9A2 C9BF                             FDB     GRAPHM
+                      ;
+C9A4 8EC986           MISC            LDX     #MINJMP         ; POINT TO TABLE
+C9A7 C60A                             LDB     #10             ; DO 10 TIMES           
+C9A9 A684             MIS1            LDA     0,X             ; GET TABLE OPCODE
+C9AB B10029                           CMPA    PIR+1
+C9AE 2708                             BEQ     MIS2
+C9B0 3003                             LEAX    3,X
+C9B2 5A                               DECB
+C9B3 26F4                             BNE     MIS1
+C9B5 7ECCCB                           JMP     ZSTART          ; BAD OPCODE, RETURN TO MON.
+C9B8 AE01             MIS2            LDX     1,X             ; GET ROUTINE ADRS FROM TABLE
+C9BA B6002E                           LDA     VX              ; GET VX
+C9BD 6E84                             JMP     0,X             ; GO TO ROUTINE
+C9BF B60014           GRAPHM          LDA     ZHI
+C9C2 B7001C                           STA     OLEDRES
+C9C5 39                               RTS
+C9C6 B60020           VTIME           LDA     TIME
+C9C9 209D                             BRA     PUTVX
+C9CB BDCBD3           VKEY            JSR     ZGETKEY
+C9CE 2098                             BRA     PUTVX
+C9D0 B70020           TIMEV           STA     TIME
+C9D3 39                               RTS
+C9D4 1F89             TONEV           TFR     A,B             ; SET DURATION=VX
+C9D6 7ECC0C                           JMP     ZBTONE
+C9D9 5F               LETIV           CLRB                    ; 16-BIT ADD VX TO I
+C9DA BB0027                           ADDA    I+1
+C9DD B70027                           STA     I+1
+C9E0 F90026                           ADCB    I
+C9E3 F70026                           STB     I
+C9E6 39                               RTS
+                      ;
+                      ; Determine Font & Character (A) to use, & set I for 'SHOW'
+                      ;
+                      ; LETDSP routine
+                      ;
+C9E7 F6001C           ZLETDSP         LDB     OLEDRES         ; Set X to the correct Font Table
+C9EA 8ECA06                           LDX     #FONTH-5        ; Initialise for Half res Font Table
+C9ED 54                               LSRB                    ; Test for Full res mode
+C9EE 2603                             BNE     LETDSP1         ; Assume Half res mode
+C9F0 8ECA51                           LDX     #FONTF-10       ; We want Full res Font Table
+C9F3 3402             LETDSP1         PSHS    A               ; Save character
+C9F5 B6001C                           LDA     OLEDRES         ; Select the correct Font character
+C9F8 C605                             LDB     #5              ; 5 pixel high font characters
+C9FA 44                               LSRA                    ; Test for Full res mode
+C9FB 2601                             BNE     LETDSP2         ; Assume Half res mode
+C9FD 58                               LSLB                    ; Double (10) for Full Res mode
+C9FE 3502             LETDSP2         PULS    A               ; Retrieve character
+CA00 840F                             ANDA    #$0F            ; Isolate LS digit
+CA02 3085             LETDSP3         LEAX    B,X             ; Next Character
+CA04 4A                               DECA                    ; (A=VX)
+CA05 2AFB                             BPL     LETDSP3
+CA07 BF0026                           STX     I               ; SET MI POINTER
+CA0A 39                               RTS
+                      ;
+                      ; Hexadecimal Font Patterns (3x5 matrix)
+                      ;
+CA0B E0A0A0A0E0       FONTH           FCB     $E0,$A0,$A0,$A0,$E0     ; 0
+CA10 4040404040                       FCB     $40,$40,$40,$40,$40     ; 1
+CA15 E020E080E0                       FCB     $E0,$20,$E0,$80,$E0     ; 2
+CA1A E020E020E0                       FCB     $E0,$20,$E0,$20,$E0     ; 3
+CA1F 80A0A0E020                       FCB     $80,$A0,$A0,$E0,$20     ; 4
+CA24 E080E020E0                       FCB     $E0,$80,$E0,$20,$E0     ; 5
+CA29 E080E0A0E0                       FCB     $E0,$80,$E0,$A0,$E0     ; 6
+CA2E E020202020                       FCB     $E0,$20,$20,$20,$20     ; 7
+CA33 E0A0E0A0E0                       FCB     $E0,$A0,$E0,$A0,$E0     ; 8
+CA38 E0A0E020E0                       FCB     $E0,$A0,$E0,$20,$E0     ; 9
+CA3D E0A0E0A0A0                       FCB     $E0,$A0,$E0,$A0,$A0     ; A
+CA42 C0A0E0A0C0                       FCB     $C0,$A0,$E0,$A0,$C0     ; B
+CA47 E0808080E0                       FCB     $E0,$80,$80,$80,$E0     ; C
+CA4C C0A0A0A0C0                       FCB     $C0,$A0,$A0,$A0,$C0     ; D
+CA51 E080E080E0                       FCB     $E0,$80,$E0,$80,$E0     ; E
+CA56 E080E08080                       FCB     $E0,$80,$E0,$80,$80     ; F
+                      ;
+                      ; Hexadecimal Font Patterns (6x10 matrix)
+                      ;
+CA5B 78FCCCCCCCCCCCCC FONTF           FCB     $78,$FC,$CC,$CC,$CC,$CC,$CC,$CC,$FC,$78 ; 0
+     FC78
+CA65 1030703030303030                 FCB     $10,$30,$70,$30,$30,$30,$30,$30,$78,$78 ; 1
+     7878
+CA6F 78FCCC0C183060C0                 FCB     $78,$FC,$CC,$0C,$18,$30,$60,$C0,$FC,$FC ; 2
+     FCFC
+CA79 78FCCC0C38380CCC                 FCB     $78,$FC,$CC,$0C,$38,$38,$0C,$CC,$FC,$78 ; 3
+     FC78
+                      ;               FCB     $0C,$1C,$3C,$6C,$CC,$FC,$FC,$0C,$0C,$0C ; 4
+                      ;               FCB     $18,$38,$78,$F8,$D8,$FC,$FC,$18,$18,$18 ; 4
+CA83 CCCCCCCCFC7C0C0C                 FCB     $CC,$CC,$CC,$CC,$FC,$7C,$0C,$0C,$0C,$0C ; 4
+     0C0C
+CA8D FCFCC0C0F8FC0CCC                 FCB     $FC,$FC,$C0,$C0,$F8,$FC,$0C,$CC,$FC,$78 ; 5
+     FC78
+CA97 78FCCCC0F8FCCCCC                 FCB     $78,$FC,$CC,$C0,$F8,$FC,$CC,$CC,$FC,$78 ; 6
+     FC78
+CAA1 FCFC0C1818303060                 FCB     $FC,$FC,$0C,$18,$18,$30,$30,$60,$60,$60 ; 7
+     6060
+CAAB 78FCCCCC78FCCCCC                 FCB     $78,$FC,$CC,$CC,$78,$FC,$CC,$CC,$FC,$78 ; 8
+     FC78
+CAB5 78FCCCCCFC7C0CCC                 FCB     $78,$FC,$CC,$CC,$FC,$7C,$0C,$CC,$FC,$78 ; 9
+     FC78
+CABF 3078CCCCFCFCCCCC                 FCB     $30,$78,$CC,$CC,$FC,$FC,$CC,$CC,$CC,$CC ; A
+     CCCC
+CAC9 F8FCCCCCF8FCCCCC                 FCB     $F8,$FC,$CC,$CC,$F8,$FC,$CC,$CC,$FC,$F8 ; B
+     FCF8
+CAD3 78FCCCC0C0C0C0CC                 FCB     $78,$FC,$CC,$C0,$C0,$C0,$C0,$CC,$FC,$78 ; C
+     FC78
+CADD F0F8DCCCCCCCCCDC                 FCB     $F0,$F8,$DC,$CC,$CC,$CC,$CC,$DC,$F8,$F0 ; D
+     F8F0
+CAE7 FCFCC0C0F8F8C0C0                 FCB     $FC,$FC,$C0,$C0,$F8,$F8,$C0,$C0,$FC,$FC ; E
+     FCFC
+CAF1 FCFCC0C0F8F8C0C0                 FCB     $FC,$FC,$C0,$C0,$F8,$F8,$C0,$C0,$C0,$C0 ; F
+     C0C0
+                      ;
+CAFB BE0026           LETDEQ          LDX     I               ; GET MI POINTER
+CAFE C664             ZDECEQ          LDB     #100            ; N=100
+CB00 8D06                             BSR     DECI            ; CALC 100'S DIGIT
+CB02 C60A                             LDB     #10             ; N=10
+CB04 8D02                             BSR     DECI            ; CALC l0'S DIGIT
+CB06 C601                             LDB     #1
+CB08 F7000E           DECI            STB     N
+CB0B 5F                               CLRB
+CB0C B1000E           LDEQ1           CMPA    N               ; DO UNTIL A<N  ...
+CB0F 2506                             BCS     LDEQ2           ; BRANCH IF LOWER NOT SAME.
+CB11 5C                               INCB
+CB12 B0000E                           SUBA    N
+CB15 20F5                             BRA     LDEQ1           ; END-DO...
+CB17 E784             LDEQ2           STB     0,X             ; STASH
+CB19 3001                             LEAX    1,X             ; FOR NEXT DIGIT
+CB1B 39                               RTS
+CB1C 1A10             STORV           ORCC    #$10            ; KILL IRQ FOR DATA STACK
+CB1E 10FF0012                         STS     XTEMP           ; SAVE SP
+CB22 10CE002F                         LDS     #VO-1           ; POINT TO VARIABLES TABLE
+CB26 BE0026                           LDX     I               ; FOINT MI
+CB29 200D                             BRA     MOVX            ; TRANSFER NB BYTES
+CB2B 1A10             LOADV           ORCC    #$10            ; KILL IRQ
+CB2D 10FF0012                         STS     XTEMP
+CB31 10FE0026                         LDS     I               ; POINT MI
+                      ;               LEAS    -1,S
+CB35 8E0030                           LDX     #VO             ; POINT TO VO
+CB38 F6002B           MOVX            LDB     VXLOC+1         ; CALC. X  (AS IN VX)
+CB3B C40F                             ANDB    #$0F            ; LOOP (X+l) TIMES.....
+CB3D 3502             MOVX1           PULS    A               ; GET NEXT V
+CB3F A784                             STA     0,X             ; COPY IT
+CB41 3001                             LEAX    1,X
+CB43 7C0027                           INC     I+1             ; I=I+X+1(ASSUMES SAME PAGE)
+CB46 5A                               DECB
+CB47 2AF4                             BPL     MOVX1           ; CONTINUE...
+CB49 10FE0012                         LDS     XTEMP           ; RESTORE SP
+CB4D 1CEF                             ANDCC   #$EF            ; RESTORE IRQ
+CB4F 39                               RTS
+                      ;
+                      ; DISPLAY ROUTINES 
+                      ;   
+CB50 B6001C           SHOW            LDA     OLEDRES         ; Get OLED Display Enable / Resolution flag
+CB53 273B                             BEQ     OLEDOFF         ; OLED is Off
+CB55 F60029                           LDB     PIR+1           ; GET N (OPCODE LSB)
+CB58 7F003F                           CLR     VF              ; CLEAR OVERLAP FLAG
+                      ;
+                      ; SHOWI routine
+                      ;
+CB5B BE0026           ZSHOWI          LDX     I               ; POINT TO PATTERN BYTES
+                      ;
+                      ; SHOWX routine
+                      ;
+CB5E C40F             ZSHOWX          ANDB    #$0F            ; COMPUTE NO. OF BYTES (N)
+CB60 2602                             BNE     SHOW2           ; IF N=0, MAKE N=16
+CB62 C610                             LDB     #16
+CB64 3404             SHOW2           PSHS    B               ; DO N TIMES,...,.
+CB66 BF0014                           STX     ZHI             ; SAVE MI POINTER
+                      
+CB69 A684                             LDA     0,X             ; FETCH NEW PATTERN BYTE
+CB6B C608                             LDB     #8              ; Do all 8 bits of pattern byte
+                      
+CB6D 48               SHOW3           ASLA                    ; Next bit to display into Carry
+CB6E 2403                             BCC     SHOW4           ; Skip if bit not set
+CB70 1725C7                           LBSR    TglPxl          ; If bit was set then toggle pixel
+CB73 7C002E           SHOW4           INC     VX              ; Move VX to next bit pixel
+CB76 5A                               DECB                    ; Decrement byte bit count
+CB77 26F4                             BNE     SHOW3           ; Do all 8 bits
+CB79 B6002E                           LDA     VX              ; Finished, so restore VX
+CB7C 8008                             SUBA    #8              ;
+CB7E B7002E                           STA     VX              ;
+CB81 7C002F                           INC     VY
+CB84 BE0014                           LDX     ZHI             ; POINT NEXT PATTERN BYTE
+CB87 3001                             LEAX    1,X
+CB89 3504                             PULS    B
+CB8B 5A                               DECB
+CB8C 1026FFD4                         LBNE    SHOW2           ; CONT.....
+CB90 39               OLEDOFF         RTS
+                      ;
+                      ; KEYPAD ROUTINES 
+                      ;
+                      ; PAINZ & PAINV routines
+                      ;
+CB91 C6F0             ZPAINZ          LDB     #$F0            ; INITIALIZE PORT
+CB93 8EC010           ZPAINV          LDX     #PIAA           ; (ENTRY PT FOR INV. DDR)
+CB96 6F01                             CLR     1,X             ; RESET & SELECT DDR
+CB98 E784                             STB     0,X             ; SET DATA DIRECTION
+CB9A C63E                             LDB     #$3E            ; Setup Ctrl with CA2 High
+CB9C E701                             STB     1,X
+CB9E 6F84                             CLR     0,X             ; Output PA4-7 Low
+CBA0 39                               RTS
+                      ;
+                      ; KEYPAD INPUT SERVICE ROUTINE
+                      ;
+                      ; KEYINP routine
+                      ;
+CBA1 8DEE             ZKEYINP         BSR     ZPAINZ          ; RESET KEYPAD PORT
+CBA3 7F0018                           CLR     BADRED          ; RESET BAD-READ FLAG
+CBA6 17008A                           LBSR    ZDEL333         ; DELAY FOR DEBOUNCE
+CBA9 E684                             LDB     0,X             ; INPUT ROW DATA
+CBAB 8D18                             BSR     KBILD           ; FORM CODE BITS 0,1
+CBAD B70017                           STA     KEYCOD
+CBB0 C60F                             LDB     #$0F            ; SET DDR FOR...
+CBB2 8DDF                             BSR     ZPAINV          ; INVERSE ROW/COL  DIR N
+CBB4 E684                             LDB     0,X             ; INPUT COLUM DATA
+CBB6 54                               LSRB                    ; RIGHT JUSTIFY
+CBB7 54                               LSRB
+CBB8 54                               LSRB
+CBB9 54                               LSRB
+CBBA 8D09                             BSR     KBILD           ; FORM CODE BITS 2,3
+CBBC 48                               ASLA
+CBBD 48                               ASLA
+CBBE BB0017                           ADDA    KEYCOD
+CBC1 B70017                           STA     KEYCOD          ; BUILD COMPLETE KEYCODE
+CBC4 39                               RTS
+CBC5 C10F             KBILD           CMPB    #$0F            ; CHECK KEY STATUS
+CBC7 2603                             BNE     KBILD0          ; KEY IS DOWN, GO DECODE IT
+CBC9 F70018                           STB     BADRED          ; NO KEY, SET BAD-READ FLAG
+CBCC 86FF             KBILD0          LDA     #-1
+CBCE 4C               KBILD1          INCA                    ; (A=RESULT)
+CBCF 54                               LSRB                    ; SHIFT DATA BIT TO CARRY
+CBD0 25FC                             BCS     KBILD1          ; FOUND ZERO BIT ?
+CBD2 39                               RTS
+                      ;
+                      ; GETKEY routine - WAIT FOR KEYDOWN, THEN INPUTS
+                      ; As we no longer use the CA1 low to high transition flag to signal a key down,
+                      ; we first ensure that no key is still down, then await a new key down.
+                      ;
+CBD3 BF0012           ZGETKEY         STX     XTEMP           ; SAVE X FOR CALLING ROUTINE
+CBD6 8DB9                             BSR     ZPAINZ          ; RESET PORT, CLEAR FLAGS
+CBD8 C636                             LDB     #$36            ; Set CA2 Low (to include FN keys)
+CBDA E701                             STB     1,X
+CBDC A684             GETK1           LDA     0,X             ; Get PortA Data
+CBDE 880F                             EORA    #$0F            ; Any Key Down?
+CBE0 26FA                             BNE     GETK1           ; Yes, Wait for Key Release
+CBE2 8DAD             GETK2           BSR     ZPAINZ          ; Re-establish PortA default
+CBE4 A684                             LDA     0,X             ; Get PortA Data
+CBE6 880F                             EORA    #$0F            ; Any Hex Key Down?
+CBE8 2611                             BNE     HEXKEY          ; Yes Fetch it in
+CBEA 5F                               CLRB
+CBEB 8DA6                             BSR     ZPAINV          ; Output PA4-7 High (All inputs)
+CBED C636                             LDB     #$36            ; Set CA2 Low (to check FN keys)
+CBEF E701                             STB     1,X
+CBF1 A684                             LDA     0,X             ; Get PortA Data
+CBF3 88FF                             EORA    #$FF            ; Any Function Key Down?
+CBF5 27EB                             BEQ     GETK2           ; No, Loop for Keydown
+CBF7 8A80                             ORA     #$80            ; Set MSb to indicate FN Key
+CBF9 2007                             BRA     HEXK1           ; Return Without Hex Code
+CBFB 8DA4             HEXKEY          BSR     ZKEYINP         ; DECODE THE KEYPAD
+CBFD 7D0018                           TST     BADRED          ; WAS IT A BAD READ?
+CC00 26E0                             BNE     GETK2           ; YES, TRY  AGAIN
+CC02 8D06             HEXK1           BSR     ZBLEEP          ; Acknowledge Key-down
+CC04 8D8B                             BSR     ZPAINZ          ; Re-establish PortA default
+CC06 BE0012                           LDX     XTEMP           ; RESTORE CALLER'S X-REG
+CC09 39                               RTS                     ; RETURN (WITH A<O FOR FN KEY)
+                      ;
+                      ; TONE GENERATING ROUTINES
+                      ;
+                      ; BLEEP routine
+                      ;
+CC0A C604             ZBLEEP          LDB     #4              ; 80ms 2400Hz
+CC0C F70021           ZBTONE          STB     TONE            ; Set Duration (RTC Cycles)
+CC0F 5F                               CLRB                    ; Ensure Tone Duration doesn't affect Freq
+CC10 3402             ZBTON           PSHS    A               ; Entry point for Variable Duration/Freq 
+CC12 867F                             LDA     #$7F            ; Sound On - DDR
+CC14 C140                             CMPB    #$40            ; Do we want 1200Hz?
+CC16 2707                             BEQ     BTON1
+CC18 BDCC41                           JSR     ZPBINZ
+CC1B C641                             LDB     #$41            ; Sound On 2400Hz - PB6 Output High
+CC1D 2005                             BRA     BTON2
+CC1F BDCC41           BTON1           JSR     ZPBINZ
+CC22 C640                             LDB     #$40            ; Sound On 1200Hz - PB6 Output High
+                      
+CC24 E784             BTON2           STB     0,X             ; PB6 High / 1200Hz or 2400Hz 
+CC26 7D0021           BTON3           TST     TONE            ; WAIT FOR RTC TIME-OUT
+CC29 26FB                             BNE     BTON3
+CC2B 863F                             LDA     #$3F            ; Sound Off - DDR
+CC2D BDCC41                           JSR     ZPBINZ
+CC30 3502                             PULS    A
+CC32 39                               RTS
+                      ;
+                      ; SOFTWARE DELAY ROUTINE FOR SERIAL I/O:
+                      ;
+                      ; DEL333 routine
+                      ;
+CC33 8D00             ZDEL333         BSR     ZDEL167         ; DELAY FOR 3.33 MILLISEC
+                      ;
+                      ; DEL167 routine
+                      ;
+CC35 3410             ZDEL167         PSHS    X               ; Save X
+CC37 8E019C                           LDX     #412            ; Delay for 1.67 Millisec (@ 2Mhz)
+CC3A 301F             DEL             LEAX    -1,X            ; Dec X
+CC3C 26FC                             BNE     DEL
+CC3E 3510                             PULS    X               ; Restore X
+CC40 39                               RTS
+                      ;
+                      ; TAPE INPUT/OUTPUT ROUTINES
+                      ; Initialize Port B for Tape I/O and Sound
+                      ; A=DDR - $7F for PB7 input, $3F for PB6 & PB7 input (Sound Off)
+                      ;
+                      ; PBINZ routine
+                      ;
+CC41 8EC012           ZPBINZ          LDX     #PIAB
+CC44 C632                             LDB     #$32            ; SELECT DDR
+CC46 E701                             STB     1,X
+CC48 A784                             STA     0,X             ; Write DDR
+CC4A C636                             LDB     #$36            ; Select Output Reg
+CC4C E701                             STB     1,X             ; WRITE CTRL REG
+CC4E C601                             LDB     #01             ; OUTPUT FOR...
+CC50 E784                             STB     0,X             ; TAPE DATA-OUT HIGH (MARKING)
+CC52 39                               RTS
+                      ;
+                      ; INBYT routine - INPUT ONE BYTE FROM TAPE PORT
+                      ;
+CC53 8D14             ZINBYT          BSR     XCHG            ; EXCHANGE X FOR PIA ADRS
+CC55 A684             IN1             LDA     0,X
+CC57 2BFC                             BMI     IN1             ; LOOK FOR START BIT
+CC59 8DDA                             BSR     ZDEL167         ; DELAY HALF BIT-TIME (300BD)
+CC5B C609                             LDB     #9              ; DO 9 TIMES....
+CC5D 1A01             IN2             ORCC    #$01            ; ENSURE PB0 MARKING
+CC5F 6984                             ROL     0,X             ; INPUT & SHIFT NEXT BIT
+CC61 46                               RORA                    ; INTO ACC-A
+CC62 8DCF                             BSR     ZDEL333         ; WAIT 1 BIT-TIME
+CC64 5A                               DECB
+CC65 26F6                             BNE     IN2             ; CONT....
+CC67 201D                             BRA     OUTX            ; RESTORE X AND RETURN
+CC69 BF0012           XCHG            STX     XTEMP           ; SAVE X-REG
+CC6C 8EC012                           LDX     #PIAB
+CC6F 39                               RTS
+                      ;
+                      ; OUTBYT routine - OUTPUT ONE BYTE TO TAPE PORT 
+                      ;
+CC70 8DF7             ZOUTBYT         BSR     XCHG
+                      ;               PSHS    A
+CC72 6A84                             DEC     0,X             ; RESET START BIT
+CC74 C60A                             LDB     #10             ; DO 10 TIMES....
+CC76 8DBB             OUT1            BSR     ZDEL333         ; DELAY 1 BIT-TIME
+CC78 3402                             PSHS    A
+CC7A 8401                             ANDA    #$01            ; Mask Bit to send (PB0)
+CC7C A784                             STA     0,X             ; NEXT BIT TO OUT LINE (PB0)
+CC7E 1A01                             ORCC    #$01
+CC80 3502                             PULS    A               ; RESTORE A
+CC82 46                               RORA
+CC83 5A                               DECB
+CC84 26F0                             BNE     OUT1            ; CONT....
+                      ;               PULS    A               ; RESTORE A
+CC86 BE0012           OUTX            LDX     XTEMP           ; RESTORE X
+CC89 39                               RTS
+                      ;
+                      ; TAPE LOAD AND DUMP ROUTINES
+                      ;
+CC8A 863F             LODUMX          LDA     #$3F            ; Sound Off
+CC8C 8DB3                             BSR     ZPBINZ
+CC8E BE0002                           LDX     BEGA            ; POINT TO FIRST LOAD/DUMP ADR
+CC91 39                               RTS
+CC92 8DF6             DUMP            BSR     LODUMX
+CC94 BF0006                           STX     ADRS
+CC97 170098                           LBSR    SHOADR          ; Display Begin Address
+CC9A BE0002                           LDX     BEGA            ; Restore Begin Address
+CC9D A684             DUMP1           LDA     0,X             ; FETCH RAM BYTE
+CC9F 8DCF                             BSR     ZOUTBYT
+CCA1 3001                             LEAX    1,X
+CCA3 BC0004                           CMPX    ENDA            ; (ENDA = LAST ADRS+1)
+CCA6 26F5                             BNE     DUMP1
+CCA8 BF0006                           STX     ADRS
+CCAB 170084                           LBSR    SHOADR          ; Display End Address
+CCAE 201B                             BRA     ZSTART
+CCB0 8DD8             LOAD            BSR     LODUMX
+CCB2 BF0006                           STX     ADRS
+CCB5 17007A                           LBSR    SHOADR          ; Display Begin Address
+CCB8 BE0002                           LDX     BEGA            ; Restore Begin Address
+CCBB 8D96             LOAD1           BSR     ZINBYT
+CCBD A784                             STA     0,X             ; STASH BYTE IN RAM
+CCBF 3001                             LEAX    1,X
+CCC1 BC0004                           CMPX    ENDA            ; DONE?
+CCC4 26F5                             BNE     LOAD1           ; CONT....
+CCC6 BF0006                           STX     ADRS
+CCC9 8D67                             BSR     SHOADR          ; Display End Address
+                      ;               (BRA ZSTART)
+                      ;
+                      ; START routine - MONITOR ENTRY POINT
+                      ;
+CCCB 10CE007F         ZSTART          LDS     #STOP           ; RESET SP TO TOP
+CCCF 8ECD8D                           LDX     #RTC            ; SETUP IRQ VECTOR FOR RTC
+CCD2 BF0000                           STX     IRQV
+CCD5 863F                             LDA     #$3F            ; Sound Off
+CCD7 17FF67                           LBSR    ZPBINZ
+CCDA 8D56                             BSR     SHOADR          ; PROMPT
+CCDC 1CEF                             ANDCC   #$EF            ; Clear CC IRQ Flag - Enable IRQ Interrupts
+CCDE 17FEF2           COMAND          LBSR    ZGETKEY         ; INPUT SOMETHING
+CCE1 4D                               TSTA
+CCE2 2A11                             BPL     INADRS          ; IF HEX, GET AN ADDRESS
+CCE4 8501                             BITA    #$01
+CCE6 262C                             BNE     MEMOD           ; FN0 = MEM0RY MODIFY
+CCE8 8502                             BITA    #$02
+CCEA 26C4                             BNE     LOAD            ; FN1 = TAPE LOAD
+CCEC 8504                             BITA    #$04            
+CCEE 26A2                             BNE     DUMP            ; FN2 = TAPE DUMP
+CCF0 BE0006           GO              LDX     ADRS            ; FN3, so FETCH ADRS FOR GO
+CCF3 6E84                             JMP     0,X
+CCF5 8D0F             INADRS          BSR     BYT1            ; BUILD ADRS MS BYTE
+CCF7 B70006                           STA     ADRS
+CCFA 8D07                             BSR     ZBYTIN          ; INPUT & BUILD LSB
+CCFC B70007                           STA     ADRS+1
+CCFF 8D31                             BSR     SHOADR          ; DISPLAY RESULTANT ADRS
+CD01 20DB                             BRA     COMAND
+                      ;
+                      ; BYTIN routine
+                      ;
+CD03 17FECD           ZBYTIN          LBSR    ZGETKEY         ; INPUT 2 HEX DIGITS
+CD06 48               BYT1            ASLA                    ; LEFT JUSTIFY FIRST DIGIT
+CD07 48                               ASLA
+CD08 48                               ASLA
+CD09 48                               ASLA
+CD0A B7000F                           STA     ATEMP           ; HOLD IT
+CD0D 17FEC3                           LBSR    ZGETKEY         ; INPUT ANOTHER DIGIT
+CD10 BB000F                           ADDA    ATEMP           ; BUILD A BYTE
+CD13 39                               RTS
+                      ;
+                      ; MEMORY MODIFY ROUTINE
+                      ;
+CD14 8D1C             MEMOD           BSR     SHOADR          ; SHOW CURRENT ADRS
+CD16 BE0006                           LDX     ADRS            ; SHOW DATA AT ADRS
+CD19 8D35                             BSR     ZSHODAT         ;
+CD1B 17FEB5                           LBSR    ZGETKEY         ; WAIT FOR INPUT
+CD1E 4D                               TSTA
+CD1F 2A06                             BPL     MEM1            ; Hex Key; Get New Data Byte
+CD21 8501                             BITA    #$01
+CD23 2606                             BNE     MEM2            ; FN0 Key; Next Adrs
+CD25 20A4                             BRA     ZSTART          ; Any other FN key; Exit Memod
+CD27 8DDD             MEM1            BSR     BYT1            ; HEX KEY; NEW DATA BYTE
+CD29 A784                             STA     0,X             ; DEPOSIT IT
+CD2B 3001             MEM2            LEAX    1,X
+CD2D BF0006                           STX     ADRS            ; BUMP ADRS
+CD30 20E2                             BRA     MEMOD
+CD32 F6001C           SHOADR          LDB     OLEDRES         ;
+CD35 8610                             LDA     #$10            ; Set Cursor for Half Res mode
+CD37 54                               LSRB                    ; Test for Full res mode
+CD38 2601                             BNE     SHOWADRC        ; Assume Half res mode
+CD3A 48                               LSLA                    ; Double for Full Res mode
+CD3B 8D3D             SHOWADRC        BSR     ZCURS1
+CD3D 86FF                             LDA     #$FF            ; Illuminate last 14 / 7 rows
+CD3F C632                             LDB     #50
+CD41 BDF192                           JSR     OledFill
+CD44 8E0006                           LDX     #ADRS           ; POINT TO ADRS MS BYTE
+CD47 8D07                             BSR     ZSHODAT
+CD49 3001                             LEAX    1,X             ; POINT TO ADRS LS BYTE
+CD4B 8D03                             BSR     ZSHODAT
+CD4D 8D1F                             BSR     ZCURSR          ; MOVE CURSOR RIGHT
+CD4F 39                               RTS
+                      ;
+                      ; SHODAT routine
+                      ;
+CD50 A684             ZSHODAT         LDA     0,X             ; FETCH DATA @ X
+                      ;
+                      ; SHOBYT routine
+                      ;
+CD52 3402             ZSHOBYT         PSHS    A
+CD54 44                               LSRA                    ; ISOLATE MS DIGIT
+CD55 44                               LSRA
+CD56 44                               LSRA
+CD57 44                               LSRA
+CD58 8D02                             BSR     ZDIGOUT         ; SHOW ONE DIGIT
+CD5A 3502                             PULS    A
+                      ;
+                      ; DIGOUT routine
+                      ;
+CD5C BF0012           ZDIGOUT         STX     XTEMP           ; SAVE X
+CD5F BDC9E7                           JSR     ZLETDSP         ; POINT TO DIGIT PATTERN
+CD62 B6001C                           LDA     OLEDRES         ;
+CD65 C605                             LDB     #5              ; Show 5 byte Pattern
+CD67 44                               LSRA                    ; Test for Full res mode
+CD68 2601                             BNE     DIGOUTC         ; Assume Half res mode
+CD6A 58                               LSLB                    ; Double (10 byte) for Full res mode
+CD6B BDCB5B           DIGOUTC         JSR     ZSHOWI
+                      ;
+                      ; CURSR routine
+                      ;
+CD6E F6001C           ZCURSR          LDB     OLEDRES         ;
+CD71 8604                             LDA     #4              ; SHIFT CURSOR RIGHT 4 DOTS
+CD73 54                               LSRB                    ; Test for Full res mode
+CD74 2601                             BNE     CURSRC          ; Assume Half res mode
+CD76 48                               LSLA                    ; Double (8 dots) for Full res mode
+CD77 BB002E           CURSRC          ADDA    VX
+                      ;
+                      ; CURS1 routine
+                      ;
+CD7A B7002E           ZCURS1          STA     VX              ; SET X COORD
+CD7D F6001C                           LDB     OLEDRES         ;
+CD80 861A                             LDA     #26             ; SET Y COORD
+CD82 54                               LSRB                    ; Test for Full res mode
+CD83 2601                             BNE     CURSR1C         ; Assume Half res mode
+CD85 48                               LSLA                    ; Double (52) for Full Res mode
+CD86 B7002F           CURSR1C         STA     VY
+CD89 BE0012                           LDX     XTEMP           ; RESTORE X_REG
+CD8C 39                               RTS
+                      ;
+                      ; REAL TIME CLOCK INTERRUPT SERVICE ROUTINE
+                      ;
+CD8D 7A0020           RTC             DEC     TIME
+CD90 7A0021                           DEC     TONE
+                                                              ; Clear PTM Counter3 IRQ Flag
+CD93 B6C001                           LDA     PTMC2           ; Read PTM Status Register
+CD96 FCC006                           LDD     PTMTM3          ; Read PTM Counter3
+CD99 3B                               RTI
+                      ;
+                      ; ---------------------------------
+                      ; Hardware Reset - Code Entry Point
+                      ; ---------------------------------
+F000                                  ORG     ENTRY
+                      ; Initialise Direct Page Register for Zero page
+F000 4F                               CLRA
+F001 1F8B                             TFR     A,DP    
+                      ; Tell asm6809 (Assembler) what page the DP register has been set to
+F003                                  SETDP   #$00
+                      ; Set Stack to Stack Top
+F003 10CE007F                         LDS     #STOP
+                      ;
+                      ; Initialise our OLED Display Panel
+                      ; There are many settings for the SSD1327, but most are correctly initialised
+                      ; following a Reset.  Therefore, I only update the settings here that I wish to
+                      ; change from their default Reset value (as per the SSD1327 datasheet). 
+                      ;
+F007 8EF1FE                           LDX     #OledInitCmds   ; Load X as pointer to Initialise Command table
+F00A C610                             LDB     #16             ; Number of Command bytes in table
+F00C A680             LoadCmdLoop     LDA     ,X+             ; Load register data pointed to by X and increment X
+F00E B7C088                           STA     OLED_CMD        ; Store Command byte
+F011 5A                               DECB                    ; Point to next register
+F012 26F8                             BNE     LoadCmdLoop     ; Have we done all Command bytes?
+                      ; Clear the Display Buffer (VRAM)
+F014 4F                               CLRA                    ; Zero byte to Clear Display buffer (VRAM)
+F015 5F                               CLRB                    ; Full Display (Start row = 0)
+F016 170179                           LBSR    OledFill        ; Fill OLED Display
+                      ; Turn ON the Display           
+F019 86AF                             LDA     #$AF            ; Turn Display ON (after clearing buffer)
+F01B B7C088                           STA     OLED_CMD        ;
+                      ;
+                      ; Initialise PTM (Counter 3 for 20ms periodic IRQ)
+F01E 8EC000                           LDX     #PTM            ; LOAD PTM ADDRESS
+F021 CC0100                           LDD     #$0100          ; Select Timer 1 / Clear Reset
+F024 A701                             STA     PTMC2-PTM,X     ; Setup for Control Register 1
+F026 E784                             STB     PTMC13-PTM,X    ; Clear Reset
+F028 CC0043                           LDD     #$0043          ; Select Timer 3 / Timer 3 IRQ E /8 mode
+F02B A701                             STA     PTMC2-PTM,X     ; Setup to write Control Register3
+F02D E784                             STB     PTMC13-PTM,X    ; Set Output Disabled / IRQ Enabled
+                                                              ; Continous / 16 bit / E div 8 prescaled
+F02F CC1388                           LDD     #5000           ; Latch for 20ms (with 2MHz /8 prescale)
+F032 A706                             STA     PTMTM3-PTM,X    ; Write Counter 3 Latch MSB
+F034 E707                             STB     PTMTM3+1-PTM,X  ; Write Counter 3 Latch LSB
+                      ;
+                      ; Setup IRQ Handler - Note: We now do this in the CHIPOS START
+                      ;               LDX     #RTC            ; SETUP IRQ VECTOR FOR RTC
+                      ;               STX     IRQV
+                      ;               ANDCC   #$EF            ; Clear CC IRQ Flag - Enable IRQ Interrupts
+                      ;
+                      ; Initially Setup PIA Port B for Sound output (Silence SN76489)
+F036 8622                             LDA     #$22            ; Select DDR Register B
+F038 B7C013                           STA     PIA_CTLB        ; CB2 goes low following data write, returned high by IRQB1 set by low to high transition on CB1
+F03B 86FF                             LDA     #$FF            ; Set Port B as all outputs
+F03D B7C012                           STA     PIA_PRTB        ; DDR B register write
+F040 8626                             LDA     #$26            ; Select Port B Data Register (rest as above) 
+F042 B7C013                           STA     PIA_CTLB
+                      ; Silence Sound output
+F045 1701A5                           LBSR    silenceSound
+                      ;
+F048 8601                             LDA     #$01            ; Set OLED Display enabled,
+F04A 971C                             STA     OLEDRES         ;  at OLED Resolution 128x64
+                      ;
+F04C 7ECCCB                           JMP     ZSTART          ; Jump to CHIPOS Entry point
+                      ;
+                      ;
+                      ; Subroutines
+                      ; -----------
+F04F                  UpdPxlStpF
+                      ; Function:     Update Pixel - Setup for Set, Clr, Tgl subroutines (128x64 res)
+                      ;               Note: As SSD1327 stores 2 pixels in each byte, it's
+                      ;               necessary to get the VRAM byte first, to avoid overwriting
+                      ;               the neighbouring pixel (hence call to GetPxlBytF).
+                      ; Parameters:   VX - X coord (0 - 127)
+                      ;               VY - Y coord (0 - 63)
+                      ; Returns:      B - Pixel value at X,Y (appropriate nibble)
+                      ; Destroys:     A,B
+F04F 8D28                             BSR     GetPxlBytF      ; Get curent pixel byte values
+F051 3404                             PSHS    B               ; Save current pixel byte
+F053 D62F                             LDB     VY              ; Retrieve Y coord
+F055 1F98                             TFR     B,A             ; 
+F057 170114                           LBSR    RowSetF         ; Set Row of pixel
+F05A 962E                             LDA     VX              ; Retrieve X coord
+F05C 1F89                             TFR     A,B             ; 
+F05E 1700EB                           LBSR    ColSetF         ; Set Column of pixel
+F061 3504                             PULS    B               ; Retrieve current pixel
+F063 39                               RTS
+                      ;
+F064                  UpdPxlStpH
+                      ; Function:     Update Pixel - Setup for SetH, ClrH, TglH subroutines (64x32 res)
+                      ;               Note: As SSD1327 stores 2 pixels in each byte, half Resolution
+                      ;               is easily achieved as we're updating 2 pixels for every "pixel"
+                      ; Parameters:   VX - X coord (0 - 63)
+                      ;               VY - Y coord (0 - 31)
+                      ; Returns:      B - Pixel value at A,B (dual even pixel byte)
+                      ; Destroys:     A,B
+F064 8D28                             BSR     GetPxlBytH      ; Get curent pixel byte value
+F066 3404                             PSHS    B               ; Save current pixel byte
+F068 D62F                             LDB     VY              ; Retrieve Y coord
+F06A 1F98                             TFR     B,A             ; 
+F06C 17010F                           LBSR    RowSetH         ; Set Row of pixel
+F06F 962E                             LDA     VX              ; Retrieve X coord
+F071 1F89                             TFR     A,B             ; 
+F073 1700E8                           LBSR    ColSetH         ; Set Column of pixel
+F076 3504                             PULS    B               ; Retrieve current pixel
+F078 39                               RTS
+                      ;
+F079                  GetPxlBytF
+                      ; Function:     Get the Pixel Byte at VX,VY
+                      ; Parameters:   VX - X coord (0 - 127)
+                      ;               VY - Y coord (0 - 63)
+                      ; Returns:      B - Pixel value at A,B (appropriate nibble)
+                      ; Destroys:     A,B
+F079 D62F                             LDB     VY              ; Retrieve Y coord
+F07B 1F98                             TFR     B,A             ; 
+F07D 1700EE                           LBSR    RowSetF         ; Set Row of pixel
+F080 962E                             LDA     VX              ; Retrieve X coord
+F082 1F89                             TFR     A,B             ; 
+F084 1700C5                           LBSR    ColSetF         ; Set Column of pixel
+F087 F6C089                           LDB     OLED_DTA        ; Dummy Read
+F08A F6C089                           LDB     OLED_DTA        ; Actual Read
+F08D 39                               RTS
+                      ;
+F08E                  GetPxlBytH
+                      ; Function:     Get the Pixel Byte at VX,VY
+                      ; Parameters:   VX - X coord (0 - 63)
+                      ;               VY - Y coord (0 - 31)
+                      ; Returns:      B - Pixel value at A,B (dual even pixel byte)
+                      ; Destroys:     A,B
+F08E D62F                             LDB     VY              ; Retrieve V coord
+F090 1F98                             TFR     B,A             ; 
+F092 1700E9                           LBSR    RowSetH         ; Set Row of pixel
+F095 962E                             LDA     VX              ; Retrieve X coord
+F097 1F89                             TFR     A,B             ; 
+F099 1700C2                           LBSR    ColSetH         ; Set Column of pixel
+F09C F6C089                           LDB     OLED_DTA        ; Dummy Read
+F09F F6C089                           LDB     OLED_DTA        ; Actual Read
+F0A2 39                               RTS
+                      ;
+F0A3                  SetPxlF
+                      ; Function:     Set the Pixel at VX,VY (128x64 Res)
+                      ;               Note: As SSD1327 stores 2 pixels in each byte, it's
+                      ;               necessary to get the VRAM byte first, to avoid overwriting
+                      ;               the neighbouring pixel.
+                      ; Parameters:   VX - X coord (0 - 127)
+                      ;               VY - Y coord (0 - 63)
+                      ; Returns:      -
+                      ; Destroys:     A,B
+F0A3 8DAA                             BSR     UpdPxlStpF      ; Setup for updating the pixel
+F0A5 962E                             LDA     VX
+F0A7 8501                             BITA    #$01            ; Test if we're updating odd column?
+F0A9 2704                             BEQ     WasEvnSet       ;
+F0AB CA0F                             ORB     #$0F            ; Set for odd column pixel
+F0AD 2002                             BRA     StrPxlSet       ;
+F0AF CAF0             WasEvnSet       ORB     #$F0            ; Set for even column pixel
+F0B1 F7C089           StrPxlSet       STB     OLED_DTA        ;
+F0B4 39                               RTS
+                      ;
+F0B5                  SetPxlH
+                      ; Function:     Set the Pixel at VX,VY (64x32 Res)
+                      ;               Note: As SSD1327 stores 2 pixels in each byte, half resolution
+                      ;               is easily achieved as we're updating 2 pixels for every "pixel"
+                      ; Parameters:   VX - X coord (0 - 63)
+                      ;               VY - Y coord (0 - 31)
+                      ; Returns:      -
+                      ; Destroys:     A,B
+F0B5 17FFAC                           LBSR    UpdPxlStpH      ; Setup for updating the pixel
+F0B8 C6FF                             LDB     #$FF            ; Set double pixel
+F0BA F7C089                           STB     OLED_DTA        ;
+F0BD F7C089                           STB     OLED_DTA        ;
+F0C0 39                               RTS
+                      ;
+F0C1                  SetPxl
+                      ; Function:     Set the Pixel at VX,VY (Res as per OLEDRES)
+                      ; Parameters:   VX - X coord (0 - 63 / 127)
+                      ;               VY - Y coord (0 - 31 / 63)
+                      ; Returns:      -
+                      ; Destroys:     -
+F0C1 3406                             PSHS    A,B
+F0C3 961C                             LDA     OLEDRES         ; Get OLED resolution flag
+F0C5 2709                             BEQ     SetPxlRts       ; Nothing to do
+F0C7 44                               LSRA                    ; Test for Full res mode
+F0C8 2704                             BEQ     SetPxl2         ;
+F0CA 8DE9                             BSR     SetPxlH         ; Assume Half Res Mode
+F0CC 2002                             BRA     SetPxlRts       ;
+F0CE 8DD3             SetPxl2         BSR     SetPxlF         ; Full Res Mode
+F0D0 3506             SetPxlRts       PULS    A,B
+F0D2 39                               RTS
+                      ;
+F0D3                  ClrPxlF
+                      ; Function:     Clear the Pixel at VX,VY (128x64 Res)
+                      ;               Note: As SSD1327 stores 2 pixels in each byte, it's
+                      ;               necessary to get the VRAM byte first, to avoid overwriting
+                      ;               the neighbouring pixel.
+                      ; Parameters:   VX - X coord (0 - 127)
+                      ;               VY - Y coord (0 - 63)
+                      ; Returns:      -
+                      ; Destroys:     A,B
+F0D3 17FF79                           LBSR    UpdPxlStpF      ; Setup for updating the pixel
+F0D6 962E                             LDA     VX
+F0D8 8501                             BITA    #$01            ; Test if we're updating odd column?
+F0DA 2704                             BEQ     WasEvnClr       ;
+F0DC C4F0                             ANDB    #$F0            ; Clear odd column pixel
+F0DE 2002                             BRA     StrPxlClr       ;
+F0E0 C40F             WasEvnClr       ANDB    #$0F            ; Clear even column pixel
+F0E2 F7C089           StrPxlClr       STB     OLED_DTA        ;
+F0E5 39                               RTS
+                      ;
+F0E6                  ClrPxlH
+                      ; Function:     Clear the Pixel at VX,VY (64x32 Res)
+                      ;               Note: As SSD1327 stores 2 pixels in each byte, half resolution
+                      ;               is easily achieved as we're updating 2 pixels for every "pixel"
+                      ; Parameters:   VX - X coord (0 - 63)
+                      ;               VY - Y coord (0 - 31)
+                      ; Returns:      -
+                      ; Destroys:     A,B
+F0E6 17FF7B                           LBSR    UpdPxlStpH      ; Setup for updating the pixel
+F0E9 5F                               CLRB                    ; Clear double pixel
+F0EA F7C089                           STB     OLED_DTA        ;
+F0ED F7C089                           STB     OLED_DTA        ;
+F0F0 39                               RTS
+                      ;
+F0F1                  ClrPxl
+                      ; Function:     Clear the Pixel at VX,VY (Res as per OLEDRES)
+                      ; Parameters:   VX - X coord (0 - 63 / 127)
+                      ;               VY - Y coord (0 - 31 / 63)
+                      ; Returns:      -
+                      ; Destroys:     -
+F0F1 3406                             PSHS    A,B
+F0F3 961C                             LDA     OLEDRES         ; Get OLED resolution flag
+F0F5 2709                             BEQ     ClrPxlRts       ; Nothing to do
+F0F7 44                               LSRA                    ; Test for Full res mode
+F0F8 2704                             BEQ     ClrPxl2         ;
+F0FA 8DEA                             BSR     ClrPxlH         ; Assume Half Res Mode
+F0FC 2002                             BRA     ClrPxlRts       ;
+F0FE 8DD3             ClrPxl2         BSR     ClrPxlF         ; Full Res Mode
+F100 3506             ClrPxlRts       PULS    A,B
+F102 39                               RTS
+                      ;
+F103                  TglPxlF
+                      ; Function:     Toggle (invert) the Pixel value at VX,VY (128x64 res)
+                      ;               Note: As SSD1327 stores 2 pixels in each byte, it's
+                      ;               necessary to get the VRAM byte first, to avoid overwriting
+                      ;               the neighbouring pixel.
+                      ; Parameters:   VX - X coord (0 - 127)
+                      ;               VY - Y coord (0 - 63)
+                      ; Returns:      -
+                      ; Destroys:     A,B
+F103 17FF49                           LBSR    UpdPxlStpF      ; Setup for updating the pixel
+F106 962E                             LDA     VX
+F108 8501                             BITA    #$01            ; Test if we're updating odd column?
+F10A 270C                             BEQ     WasEvnTgl       ;
+F10C C80F                             EORB    #$0F            ; Invert odd column pixel
+F10E C50F                             BITB    #$0F            ; Was Pixel toggled OFF?
+F110 2610                             BNE     StrPxlTglF      ; No, pixel was originally OFF
+F112 8601                             LDA     #1              ; SET CHIPOS OVERLAP FLAG (VF)
+F114 973F                             STA     VF
+F116 200A                             BRA     StrPxlTglF      ;
+F118 C8F0             WasEvnTgl       EORB    #$F0            ; Invert even column pixel
+F11A C5F0                             BITB    #$F0            ; Was Pixel toggled OFF?
+F11C 2604                             BNE     StrPxlTglF      ; No, pixel was originally OFF
+F11E 8601                             LDA     #1              ; SET CHIPOS OVERLAP FLAG (VF)
+F120 973F                             STA     VF
+F122 F7C089           StrPxlTglF      STB     OLED_DTA        ;
+F125 39                               RTS
+                      ;
+F126                  TglPxlH
+                      ; Function:     Toggle (invert) the Pixel value at VX,VY (64x32 res)
+                      ;               Note: As SSD1327 stores 2 pixels in each byte, half resolution
+                      ;               is easily achieved as we're updating 2 pixels for every "pixel"
+                      ; Parameters:   VX - X coord (0 - 63)
+                      ;               VY - Y coord (0 - 31)
+                      ; Returns:      -
+                      ; Destroys:     A,B
+F126 17FF3B                           LBSR    UpdPxlStpH      ; Setup for updating the pixel
+F129 C8FF                             EORB    #$FF            ; Invert column dual pixel
+F12B C5FF                             BITB    #$FF            ; Was Pixel toggled OFF?
+F12D 2604                             BNE     StrPxlTglH      ; No, pixel was originally OFF
+F12F 8601                             LDA     #1              ; SET CHIPOS OVERLAP FLAG (VF)
+F131 973F                             STA     VF
+F133 F7C089           StrPxlTglH      STB     OLED_DTA        ;
+F136 F7C089                           STB     OLED_DTA        ;
+F139 39                               RTS
+                      ;
+F13A                  TglPxl
+                      ; Function:     Toggle (invert) the Pixel value at VX,VY (Res as per OLEDRES)
+                      ; Parameters:   VX - X coord (0 - 63 / 127)
+                      ;               VY - Y coord (0 - 31 / 63)
+                      ; Returns:      -
+                      ; Destroys:     -
+F13A 3406                             PSHS    A,B
+F13C 961C                             LDA     OLEDRES         ; Get OLED resolution flag
+F13E 2709                             BEQ     TglPxlRts       ; Nothing to do
+F140 44                               LSRA                    ; Test for Full res mode
+F141 2704                             BEQ     TglPxl2         ;
+F143 8DE1                             BSR     TglPxlH         ; Assume Half Res Mode
+F145 2002                             BRA     TglPxlRts       ;
+F147 8DBA             TglPxl2         BSR     TglPxlF         ; Full Res Mode
+F149 3506             TglPxlRts       PULS    A,B
+F14B 39                               RTS
+                      ;
+F14C                  ColSetF
+                      ; Function:     Set the Display buffer Column Start and End addresses (128x64 res)
+                      ; Parameters:   A - Start column (0 - 127)
+                      ;               B - End column  (0 - 127)
+                      ; Returns:      -
+                      ; Destroys:     A,B
+F14C 3402                             PSHS    A               ;
+F14E 8615                             LDA     #$15            ; Set Column Address Command
+F150 B7C088                           STA     OLED_CMD        ;
+F153 3502                             PULS    A               ; Start column (left)
+F155 44                               LSRA                    ; Div A by 2 (2 pixels per byte)
+F156 B7C088                           STA     OLED_CMD        ;
+F159 54                               LSRB                    ; Div B by 2 (2 pixels per byte)
+F15A F7C088                           STB     OLED_CMD        ; End column address (right)
+F15D 39                               RTS
+                      ;
+F15E                  ColSetH
+                      ; Function:     Set the Display buffer Column Start and End addresses (64x32 res)
+                      ; Parameters:   A - Start column (0 - 63)
+                      ;               B - End column  (0 - 63)
+                      ; Returns:      -
+                      ; Destroys:     -
+F15E 3402                             PSHS    A               ;
+F160 8615                             LDA     #$15            ; Set Column Address Command
+F162 B7C088                           STA     OLED_CMD        ;
+F165 3502                             PULS    A               ; Start column (left)
+F167 B7C088                           STA     OLED_CMD        ;
+F16A F7C088                           STB     OLED_CMD        ; End column address (right)
+F16D 39                               RTS
+                      ;
+F16E                  RowSetF
+                      ; Function:     Set the Display buffer Row Start and End addresses (128x64 res)
+                      ; Parameters:   A - Start row (0 - 63)
+                      ;               B - End row (0 - 63) 
+                      ; Returns:      -
+                      ; Destroys:     -
+F16E 3402                             PSHS    A               ; Save A
+F170 8675                             LDA     #$75            ; Set Row Address Command
+F172 B7C088                           STA     OLED_CMD        ;
+F175 3502                             PULS    A               ; Start row (top)
+F177 B7C088                           STA     OLED_CMD        ;
+F17A F7C088                           STB     OLED_CMD        ; End row (bottom)
+F17D 39                               RTS
+                      ;
+F17E                  RowSetH
+                      ; Function:     Set the Display buffer Row Start and End addresses (64x32 res)
+                      ; Parameters:   A - Start row (0 - 31)
+                      ;               B - End row (0 - 31) 
+                      ; Returns:      -
+                      ; Destroys:     A,B
+F17E 3402                             PSHS    A               ; Save A
+F180 8675                             LDA     #$75            ; Set Row Address Command
+F182 B7C088                           STA     OLED_CMD        ;
+F185 3502                             PULS    A               ; Start row (top)
+F187 48                               LSLA                    ;
+F188 B7C088                           STA     OLED_CMD        ;
+F18B 58                               LSLB                    ;
+F18C CB01                             ADDB    #$01            ;
+F18E F7C088                           STB     OLED_CMD        ; End row (bottom)
+F191 39                               RTS
+                      ;
+F192                  OledFill
+                      ; Function:     Fill OLED display VRAM with byte, from a specified start row
+                      ; Parameters:   A - Byte to fill OLED buffer with
+                      ;               B - Start Row (i.e. 0 for full panel fill)
+                      ; Returns:      -
+                      ; Destroys:     B,Y
+                      ; Turn ON the Display           
+F192 1F02                             TFR     D,Y             ; Save Parameters
+F194 86A4                             LDA     #$A4            ; Normal Display
+F196 B7C088                           STA     OLED_CMD        ;
+                      ;
+F199 4F                               CLRA                    ; Set Column Address range
+F19A C67F                             LDB     #127            ; Start =0, End = 127
+F19C 8DAE                             BSR     ColSetF         ;
+                      ;
+F19E 1F20                             TFR     Y,D             ; Restore Parameters
+F1A0 3402                             PSHS    A               ; Save Byte to fill
+F1A2 1F98                             TFR     B,A             ; Set Row Address range
+                      
+F1A4 108E0000                         LDY     #0              ; Establish Count of Bytes to Write
+F1A8 31A90080         WrtDtaLp1       LEAY    128,Y           ; Add 128 to Y
+F1AC 5C                               INCB
+F1AD C140                             CMPB    #64
+F1AF 26F7                             BNE     WrtDtaLp1
+                      ;
+F1B1 C63F                             LDB     #63             ; Start = A, End = 63
+F1B3 8DB9                             BSR     RowSetF         ;
+F1B5 3502                             PULS    A               ; Restore Byte to fill
+F1B7 B7C089           WrtDtaLp2       STA     OLED_DTA        ; Write Byte to curent buffer location
+F1BA 313F                             LEAY    -1,Y            ; Dec Y
+F1BC 26F9                             BNE     WrtDtaLp2       ; Done?
+F1BE 39                               RTS
+                      ;
+F1BF                  OledFillAll
+                      ; Function:     Fill OLED display VRAM with byte (note 1 byte = 2 pixels)
+                      ; Parameters:   A - Byte to fill OLED buffer with
+                      ; Returns:      -
+                      ; Destroys:     Y
+F1BF 108E1000                         LDY     #4096           ; 64 x 64 bytes (128 x 64 pixels)
+F1C3 3402                             PSHS    A               ; Save Byte we want to fill with
+F1C5 86A4                             LDA     #$A4            ; Normal Display
+F1C7 B7C088                           STA     OLED_CMD        ;
+                      ;
+F1CA 8600                             LDA     #$00            ; Set Column Address range
+F1CC C67F                             LDB     #$7F            ; Start =0, End = 128
+F1CE 17FF7B                           LBSR    ColSetF ;
+                      ;
+F1D1 8600                             LDA     #$00            ; Set Row Address range
+F1D3 C63F                             LDB     #$3F            ; Start = 0, End = 64
+F1D5 8D97                             BSR     RowSetF ;
+                      ;
+F1D7 3502                             PULS    A               ; Restore Byte we want to fill with
+F1D9 B7C089           WrtDtaLp        STA     OLED_DTA        ; Write Byte to curent buffer location
+                      ;               PSHS    Y
+                      ;               BSR     delay1MS
+                      ;               PULS    Y
+F1DC 313F                             LEAY    -1,Y            ; Dec Y
+F1DE 26F9                             BNE     WrtDtaLp        ; Done?
+F1E0 39                               RTS
+                      ;
+F1E1                  writeSoundByte
+                      ; Function:     Write Sound Byte (A) to SN76489 and wait for not busy
+                      ; Parameters:   A - Sound Byte to write
+                      ; Returns:      -
+                      ; Destroys:     A
+F1E1 B7C012                           STA PIA_PRTB
+F1E4 B6C013           busyCheck       LDA PIA_CTLB            ; Read control Register
+F1E7 2AFB                             BPL busyCheck           ; Wait for CB1 transition (IRQB1 flag)  
+F1E9 B6C012                           LDA PIA_PRTB            ; Reset the IRQ flag by reading the data register
+F1EC 39                               RTS
+                      ;
+F1ED                  silenceSound    
+                      ; Function:     Silence all SN76489 Sound Channels
+                      ; Parameters:   -
+                      ; Returns:      -
+                      ; Destroys:     A
+F1ED 869F                             LDA     #$9F            ; Turn Off Channel 0
+F1EF 8DF0                             BSR     writeSoundByte
+F1F1 86BF                             LDA     #$BF            ; Turn Off Channel 1
+F1F3 8DEC                             BSR     writeSoundByte
+F1F5 86CF                             LDA     #$CF            ; Turn Off Channel 2
+F1F7 8DE8                             BSR     writeSoundByte
+F1F9 86FF                             LDA     #$FF            ; Turn Off Noise Channel
+F1FB 8DE4                             BSR     writeSoundByte
+F1FD 39                               RTS
+                      ;
+F1FE B371             OledInitCmds    FCB     $B3,$71         ; Set Clk Divider / Osc Fequency
+F200 A051                             FCB     $A0,$51         ; Set appropriate Display re-map
+F202 D562                             FCB     $D5,$62         ; Enable second pre-charge
+F204 817F                             FCB     $81,$7F         ; Set contrast (0 - $FF)
+F206 B174                             FCB     $B1,$74         ; Set phase length - Phase 1 = 4 DCLK / Phase 2 = 7 DCLK
+F208 B60F                             FCB     $B6,$0F         ; Set second pre-charge period
+F20A BC07                             FCB     $BC,$07         ; Set pre-charge voltage - 0.613 x Vcc
+F20C BE07                             FCB     $BE,$07         ; Set VCOMH - 0.86 x Vcc
+                      ;
+                      ;
+                      ; Default Interrupt Handlers (Redirects)
+                      ;
+F20E 3B               RSRVD           RTI                     ; Reserved Vector / Handler
+F20F 3B               SWI3            RTI                     ; SWI3 Vector / Handler
+F210 3B               SWI2            RTI                     ; SWI2 Vector / Handler
+F211 3B               FIRQ            RTI                     ; FIRQ Vector / Handler
+F212 9E00             IRQ             LDX     IRQV            ; IRQ Vector - Redirect to IRQV
+F214 6E84                             JMP     0,X
+F216 3B               SWI             RTI                     ; SWI Vextor / Handler
+F217 3B               NMI             RTI                     ; NMI Vector / Handler
+                      
+                      ;
+                      ; Standard CHIPOS functions (subroutines) - Redirects
+                      ;
+F700                                  ORG     $F700           ; Establish Standard base address for Redirects
+F700 7EC889           ERASE           JMP     ZERASE          ; Clear the display buffer.
+F703 7EC88B           FILL            JMP     ZFILL           ; Fill part or all of display buffer with constant byte.
+F706 7EC96E           RANDOM          JMP     ZRANDOM         ; Generate a pseudorandom byte.
+F709 7EC9E7           LETDSP          JMP     ZLETDSP         ; Called prior to SHOWI to display a hex digit.
+F70C 7ECAFE           DECEQ           JMP     ZDECEQ          ; Store 3-digit BCD equivalent of A at X, X+1, X+2.
+F70F 7ECB5B           SHOWI           JMP     ZSHOWI          ; Displays an N-byte symbol in memory pointed at by I.
+F712 7ECB5E           SHOWX           JMP     ZSHOWX          ; Displays an N-byte symbol in memory pointed at by X.
+F715 7ECB91           PAINZ           JMP     ZPAINZ          ; Initialises the keypad port.
+F718 7ECB93           PAINV           JMP     ZPAINV          ; Inverts DDR for Keypad port.
+F71B 7ECBA1           KEYINP          JMP     ZKEYINP         ; Decodes the Hex keypad. after a 3.33msec debounce delay.
+F71E 7ECBD3           GETKEY          JMP     ZGETKEY         ; Waits for a Key to be pressed, ackowledges with a BLEEP.
+F721 7ECC0A           BLEEP           JMP     ZBLEEP          ; Generates a 1200Hz tone in the speaker for approx 80ms.
+F724 7ECC0C           BTONE           JMP     ZBTONE          ; Generates a variable length tone (B).
+F727 7ECC10           BTON            JMP     ZBTON           ; Generates a variable length tone (TONE) at either 1200Hz or 600Hz (B).
+F72A 7ECC33           DEL333          JMP     ZDEL333         ; Delay for 3.33ms.
+F72D 7ECC35           DEL167          JMP     ZDEL167         ; Delay for 1.67ms.
+F730 7ECC41           PBINZ           JMP     ZPBINZ          ; Initialise Tape and Sound port.
+F733 7ECC53           INBYT           JMP     ZINBYT          ; Inputs a serial byte at 300 baud.
+F736 7ECC70           OUTBYT          JMP     ZOUTBYT         ; Outputs a serial byte at 300 baud.
+F739 7ECD03           BYTIN           JMP     ZBYTIN          ; Accepts 2 Hex digits from Keypad and builds a byte.
+F73C 7ECCCB           START           JMP     ZSTART          ; CHIPOS Monitor entry point.
+F73F 7ECD50           SHODAT          JMP     ZSHODAT         ; Display a byte (2 Hex digits) pointed at by X.
+F742 7ECD52           SHOBYT          JMP     ZSHOBYT         ; Display a byte (2 Hex digits) in A reg.
+F745 7ECD5C           DIGOUT          JMP     ZDIGOUT         ; Display lesast significant digit in A reg.
+F748 7ECD6E           CURSR           JMP     ZCURSR          ; Moves cursor position to the right.
+F74B 7ECD7A           CURS1           JMP     ZCURS1          ; Reset cursor horizontal position (as per A). 
+                      ;
+                      ;
+                      ; Hardware Vector Table
+                      ;
+FFF0                                  ORG     $FFF0           ; Setup 6809 Hardware Vectors
+                      ;               
+FFF0 F20E                             FDB     RSRVD           ; Reserved
+FFF2 F20F                             FDB     SWI3            ; Software Interrupt 3
+FFF4 F210                             FDB     SWI2            ; Software Interrupt 2
+FFF6 F211                             FDB     FIRQ            ; Fast Interrupt Request
+FFF8 F212                             FDB     IRQ             ; Interrupt Request
+FFFA F216                             FDB     SWI             ; Software Interrupt
+FFFC F217                             FDB     NMI             ; Non-Maskable Interrupt
+FFFE F000                             FDB     ENTRY           ; Reset
+                      ;
+0000                                  END
